@@ -1,0 +1,171 @@
+import React, { useState, useCallback, useMemo } from 'react';
+import { chunkPdfByCandidate } from './services/pdfService';
+import { extractCandidateFromText } from './services/geminiService';
+import { createPresentation } from './services/pptService';
+import type { CandidateData, ProcessingStatus } from './types';
+
+// --- Helper Components (defined outside App to prevent re-creation on re-renders) ---
+
+interface FileUploaderProps {
+  onFileSelect: (file: File) => void;
+  disabled: boolean;
+}
+
+const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, disabled }) => {
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files && event.target.files.length > 0) {
+      onFileSelect(event.target.files[0]);
+    }
+  };
+
+  return (
+    <div className="w-full max-w-lg mx-auto">
+      <label
+        className={`flex justify-center w-full h-32 px-4 transition bg-white border-2 border-gray-300 border-dashed rounded-md appearance-none cursor-pointer hover:border-gray-400 focus:outline-none ${
+          disabled ? 'opacity-50 cursor-not-allowed' : ''
+        }`}
+      >
+        <span className="flex items-center space-x-2">
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+          </svg>
+          <span className="font-medium text-gray-600">
+            Drop CV Longlist PDF here, or <span className="text-blue-600 underline">browse</span>
+          </span>
+        </span>
+        <input type="file" name="file_upload" className="hidden" accept=".pdf" onChange={handleFileChange} disabled={disabled} />
+      </label>
+    </div>
+  );
+};
+
+const Spinner: React.FC = () => (
+  <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+  </svg>
+);
+
+interface CandidateCardProps {
+  candidate: CandidateData;
+}
+const CandidateCard: React.FC<CandidateCardProps> = ({ candidate }) => (
+    <div className="bg-white p-4 rounded-lg shadow-md border border-gray-200 animate-fade-in">
+        <h3 className="text-xl font-bold text-blue-800">{candidate.name}</h3>
+    </div>
+);
+
+
+// --- Main App Component ---
+
+export default function App() {
+  const [file, setFile] = useState<File | null>(null);
+  const [status, setStatus] = useState<ProcessingStatus>('idle');
+  const [candidatesData, setCandidatesData] = useState<CandidateData[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [processedCount, setProcessedCount] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+
+  const isProcessing = useMemo(() => ['parsing', 'extracting', 'generating'].includes(status), [status]);
+
+  const handleFileSelect = useCallback((selectedFile: File) => {
+    setFile(selectedFile);
+    setCandidatesData([]);
+    setError(null);
+    setStatus('idle');
+  }, []);
+
+  const processCvFile = async () => {
+    if (!file) return;
+
+    setStatus('parsing');
+    setError(null);
+    setCandidatesData([]);
+    setProcessedCount(0);
+    setTotalCount(0);
+
+    try {
+      const cvChunks = await chunkPdfByCandidate(file);
+      setTotalCount(cvChunks.length);
+      setStatus('extracting');
+
+      const allData: CandidateData[] = [];
+      for (const cvText of cvChunks) {
+        const candidate = await extractCandidateFromText(cvText);
+        allData.push(candidate);
+        setCandidatesData(prevData => [...prevData, candidate]); // Update state progressively
+        setProcessedCount(prev => prev + 1);
+      }
+      
+      setStatus('generating');
+      await createPresentation(allData);
+
+      setStatus('done');
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+      setStatus('error');
+    }
+  };
+  
+  const statusMessage = useMemo(() => {
+    switch(status) {
+      case 'idle': return "Upload a PDF to begin.";
+      case 'parsing': return "Parsing PDF and chunking CVs...";
+      case 'extracting': return `Extracting info from CV... (${processedCount}/${totalCount})`;
+      case 'generating': return "Generating PowerPoint presentation...";
+      case 'done': return "Process complete! Your download should start automatically.";
+      case 'error': return `An error occurred: ${error}`;
+      default: return "";
+    }
+  }, [status, processedCount, totalCount, error]);
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center py-10 px-4">
+      <div className="w-full max-w-4xl mx-auto">
+        <header className="text-center mb-8">
+          <h1 className="text-4xl font-extrabold text-gray-800">CV to PowerPoint Automator</h1>
+          <p className="mt-2 text-lg text-gray-600">Automate your recruitment workflow with AI.</p>
+        </header>
+
+        <main className="bg-white shadow-xl rounded-lg p-8">
+          {!file && <FileUploader onFileSelect={handleFileSelect} disabled={isProcessing} />}
+          
+          {file && (
+             <div className="text-center">
+              <p className="mb-4 text-gray-700">File selected: <span className="font-semibold">{file.name}</span></p>
+
+              <button
+                onClick={processCvFile}
+                disabled={isProcessing}
+                className="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
+              >
+                {isProcessing && <Spinner />}
+                <span className="ml-2">{isProcessing ? 'Processing...' : 'Generate Presentation'}</span>
+              </button>
+             </div>
+          )}
+
+          {(isProcessing || status === 'done' || status === 'error') && (
+            <div className="mt-8 text-center">
+              <p className={`text-lg font-medium ${status === 'error' ? 'text-red-600' : 'text-gray-700'}`}>
+                {statusMessage}
+              </p>
+            </div>
+          )}
+
+          {candidatesData.length > 0 && (
+            <div className="mt-8">
+              <h2 className="text-2xl font-semibold text-gray-800 mb-4">Extracted Candidates</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {candidatesData.map((candidate, index) => (
+                  <CandidateCard key={index} candidate={candidate} />
+                ))}
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}

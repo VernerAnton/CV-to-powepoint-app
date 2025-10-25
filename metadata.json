@@ -1,0 +1,5 @@
+{
+  "name": "CV to PowerPoint Automator",
+  "description": "An application to automatically parse LinkedIn CVs from a PDF, extract key information using Gemini, and generate a PowerPoint presentation.",
+  "requestFramePermissions": []
+}
