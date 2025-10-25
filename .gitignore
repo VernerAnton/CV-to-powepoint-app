@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 pptx_extracted
+template_extracted
 
 # Editor directories and files
 .vscode/*
