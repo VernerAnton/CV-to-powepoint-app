@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { chunkPdfByCandidate } from './services/pdfService';
 import { extractCandidateFromText } from './services/geminiService';
 import { createPresentation } from './services/pptService';
@@ -66,6 +66,7 @@ export default function App() {
   const [processedCount, setProcessedCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
   const [failedCandidates, setFailedCandidates] = useState<Array<{ index: number; error: string }>>([]);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const isProcessing = useMemo(() => ['parsing', 'extracting', 'generating'].includes(status), [status]);
 
@@ -77,8 +78,30 @@ export default function App() {
     setFailedCandidates([]);
   }, []);
 
+  const handleReset = useCallback(() => {
+    setFile(null);
+    setCandidatesData([]);
+    setError(null);
+    setStatus('idle');
+    setFailedCandidates([]);
+    setProcessedCount(0);
+    setTotalCount(0);
+    abortControllerRef.current = null;
+  }, []);
+
+  const handleCancel = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setStatus('error');
+      setError('Processing cancelled by user.');
+    }
+  }, []);
+
   const processCvFile = async () => {
     if (!file) return;
+
+    // Create new abort controller for this processing session
+    abortControllerRef.current = new AbortController();
 
     setStatus('parsing');
     setError(null);
@@ -97,6 +120,11 @@ export default function App() {
       const MAX_RETRIES = 3;
 
       for (let i = 0; i < cvChunks.length; i++) {
+        // Check if processing was cancelled
+        if (abortControllerRef.current?.signal.aborted) {
+          console.log('Processing cancelled by user');
+          return;
+        }
         let retries = MAX_RETRIES;
         let success = false;
         let lastError: Error | null = null;
@@ -169,19 +197,46 @@ export default function App() {
         <main className="bg-white shadow-xl rounded-lg p-8">
           {!file && <FileUploader onFileSelect={handleFileSelect} disabled={isProcessing} />}
           
-          {file && (
+          {file && status === 'idle' && (
              <div className="text-center">
               <p className="mb-4 text-gray-700">File selected: <span className="font-semibold">{file.name}</span></p>
 
-              <button
-                onClick={processCvFile}
-                disabled={isProcessing}
-                className="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
-              >
-                {isProcessing && <Spinner />}
-                <span className="ml-2">{isProcessing ? 'Processing...' : 'Generate Presentation'}</span>
-              </button>
+              <div className="flex gap-3 justify-center">
+                <button
+                  onClick={processCvFile}
+                  className="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  Generate Presentation
+                </button>
+                <button
+                  onClick={handleReset}
+                  className="inline-flex items-center justify-center px-6 py-3 border border-gray-300 text-base font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  Choose Different File
+                </button>
+              </div>
              </div>
+          )}
+
+          {isProcessing && (
+            <div className="text-center">
+              <p className="mb-4 text-gray-700">File selected: <span className="font-semibold">{file?.name}</span></p>
+              <div className="flex gap-3 justify-center">
+                <button
+                  disabled
+                  className="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-gray-400 cursor-not-allowed"
+                >
+                  <Spinner />
+                  <span className="ml-2">Processing...</span>
+                </button>
+                <button
+                  onClick={handleCancel}
+                  className="inline-flex items-center justify-center px-6 py-3 border border-red-300 text-base font-medium rounded-md shadow-sm text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           )}
 
           {(isProcessing || status === 'done' || status === 'error') && (
@@ -203,6 +258,14 @@ export default function App() {
                 <p className="mt-2 text-sm text-green-600">
                   All {totalCount} candidates processed successfully!
                 </p>
+              )}
+              {(status === 'done' || status === 'error') && (
+                <button
+                  onClick={handleReset}
+                  className="mt-6 inline-flex items-center justify-center px-6 py-3 border border-gray-300 text-base font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  Upload New File
+                </button>
               )}
             </div>
           )}
