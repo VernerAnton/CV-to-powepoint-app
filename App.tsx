@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { chunkPdfByCandidate } from './services/pdfService';
 import { extractCandidateFromText, type GeminiModel } from './services/geminiService';
-import { createPresentation } from './services/pptService';
+import { createPresentationFromTemplate } from './services/pptTemplateService';
 import type { CandidateData, ProcessingStatus } from './types';
 
 // --- Helper Components (defined outside App to prevent re-creation on re-renders) ---
@@ -161,7 +161,7 @@ export default function App() {
       // Only generate PowerPoint if at least one candidate was successfully extracted
       if (allData.length > 0) {
         setStatus('generating');
-        await createPresentation(allData);
+        await createPresentationFromTemplate(allData);
         setStatus('done');
       } else {
         // All candidates failed
