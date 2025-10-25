@@ -94,20 +94,39 @@ export default function App() {
 
       const allData: CandidateData[] = [];
       const failures: Array<{ index: number; error: string }> = [];
+      const MAX_RETRIES = 3;
 
       for (let i = 0; i < cvChunks.length; i++) {
-        try {
-          const candidate = await extractCandidateFromText(cvChunks[i]);
-          allData.push(candidate);
-          setCandidatesData(prevData => [...prevData, candidate]); // Update state progressively
-        } catch (err) {
-          const errorMsg = err instanceof Error ? err.message : 'Unknown error occurred';
-          console.error(`Failed to extract candidate #${i + 1}:`, err);
-          failures.push({ index: i + 1, error: errorMsg });
-          setFailedCandidates(prev => [...prev, { index: i + 1, error: errorMsg }]);
-        } finally {
-          setProcessedCount(prev => prev + 1);
+        let retries = MAX_RETRIES;
+        let success = false;
+        let lastError: Error | null = null;
+
+        while (retries > 0 && !success) {
+          try {
+            const candidate = await extractCandidateFromText(cvChunks[i]);
+            allData.push(candidate);
+            setCandidatesData(prevData => [...prevData, candidate]); // Update state progressively
+            success = true;
+          } catch (err) {
+            lastError = err instanceof Error ? err : new Error('Unknown error occurred');
+            retries--;
+
+            if (retries > 0) {
+              // Exponential backoff: 1s, 2s, 4s
+              const waitTime = 1000 * Math.pow(2, MAX_RETRIES - retries - 1);
+              console.log(`Retry ${MAX_RETRIES - retries}/${MAX_RETRIES} for candidate #${i + 1} after ${waitTime}ms...`);
+              await new Promise(resolve => setTimeout(resolve, waitTime));
+            } else {
+              // All retries exhausted
+              const errorMsg = lastError.message;
+              console.error(`Failed to extract candidate #${i + 1} after ${MAX_RETRIES} attempts:`, lastError);
+              failures.push({ index: i + 1, error: `${errorMsg} (failed after ${MAX_RETRIES} attempts)` });
+              setFailedCandidates(prev => [...prev, { index: i + 1, error: `${errorMsg} (failed after ${MAX_RETRIES} attempts)` }]);
+            }
+          }
         }
+
+        setProcessedCount(prev => prev + 1);
       }
 
       // Only generate PowerPoint if at least one candidate was successfully extracted
