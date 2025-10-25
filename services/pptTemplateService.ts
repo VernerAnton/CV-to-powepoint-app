@@ -89,19 +89,22 @@ export async function createPresentationFromTemplate(candidates: CandidateData[]
     const arrayBuffer = await response.arrayBuffer();
     const zip = new PizZip(arrayBuffer);
 
-    // Get slide 2 (the candidate template slide)
+    // Get slide 2 (the candidate template slide) as our master template
     const templateSlideXml = zip.file('ppt/slides/slide2.xml')?.asText();
     if (!templateSlideXml) {
       throw new Error('Could not find slide2.xml in template');
     }
 
+    // Calculate how many slides we need (4 candidates per slide)
+    const slidesNeeded = Math.ceil(candidates.length / 4);
+    console.log(`Generating ${slidesNeeded} slides for ${candidates.length} candidates`);
+
     // Split candidates into pages of 4
     const pages = chunk(candidates, 4);
 
-    console.log(`Generating ${pages.length} slides for ${candidates.length} candidates`);
-
-    // Process each page
+    // Process each page - create a slide for each batch of 4 candidates
     pages.forEach((pageCandidates, pageIndex) => {
+      // Start with a fresh copy of the template for each slide
       let slideXml = templateSlideXml;
 
       // Replace placeholders for each candidate position (1-4)
@@ -128,7 +131,7 @@ export async function createPresentationFromTemplate(candidates: CandidateData[]
         );
       });
 
-      // Clear unused positions if less than 4 candidates
+      // Clear unused positions if less than 4 candidates on this slide
       for (let i = pageCandidates.length; i < 4; i++) {
         const num = i + 1;
         slideXml = replacePlaceholder(slideXml, `{{NAME_${num}}}`, '');
@@ -136,14 +139,13 @@ export async function createPresentationFromTemplate(candidates: CandidateData[]
         slideXml = replacePlaceholder(slideXml, `{{EDUCATION_${num}}}`, '');
       }
 
-      // For first page, update existing slide2.xml
-      // For additional pages, we need to duplicate the slide (complex - leaving for now)
-      if (pageIndex === 0) {
-        zip.file('ppt/slides/slide2.xml', slideXml);
-      } else {
-        // TODO: Implement slide duplication for pages 2+
-        console.warn(`Page ${pageIndex + 1} with ${pageCandidates.length} candidates not yet supported (slide duplication needed)`);
-      }
+      // Save the filled slide
+      // Slide numbering: slide2.xml is first candidate slide, slide3.xml is second, etc.
+      const slideNumber = pageIndex + 2;
+      const slideFileName = `ppt/slides/slide${slideNumber}.xml`;
+
+      zip.file(slideFileName, slideXml);
+      console.log(`✓ Created ${slideFileName} with ${pageCandidates.length} candidates`);
     });
 
     // Generate the output file
@@ -164,7 +166,7 @@ export async function createPresentationFromTemplate(candidates: CandidateData[]
 
     URL.revokeObjectURL(url);
 
-    console.log('✅ PowerPoint generated successfully!');
+    console.log(`✅ PowerPoint generated successfully with ${slidesNeeded} candidate slides!`);
 
   } catch (error) {
     console.error('Error generating presentation from template:', error);
