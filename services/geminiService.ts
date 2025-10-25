@@ -42,12 +42,19 @@ const candidateSchema = {
   required: ["name", "workHistory", "education"],
 };
 
-export const extractCandidateFromText = async (cvText: string): Promise<CandidateData> => {
+export type GeminiModel = 'gemini-2.5-flash' | 'gemini-2.5-pro';
+
+export const extractCandidateFromText = async (
+  cvText: string,
+  model: GeminiModel = 'gemini-2.5-flash'
+): Promise<CandidateData> => {
   const prompt = `
 You are an expert HR assistant responsible for parsing CVs.
 Analyze the following text from a single candidate's CV and extract their information.
 The CV is from a LinkedIn profile and is likely in English, but may contain Finnish terms.
 Respond ONLY with a single valid JSON object adhering to the provided schema.
+
+IMPORTANT: Exclude any work experiences where the job title contains "Board Member" (case-insensitive).
 
 CV Text:
 ---
@@ -56,13 +63,13 @@ ${cvText}
 
 Extract the following:
 1. The full name of the candidate.
-2. Their last 5 work experiences, including job title and company name. If there are fewer than 5, extract all of them. Dates should be in MM/YYYY - MM/YYYY format.
+2. Their last 5 work experiences, including job title and company name. Exclude positions containing "Board Member". If there are fewer than 5, extract all of them. Dates should be in MM/YYYY - MM/YYYY format.
 3. All of their educational experiences, including the degree or qualification and the name of the institution. Dates should be in MM/YYYY - MM/YYYY format.
 `;
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -71,7 +78,14 @@ Extract the following:
     });
 
     const jsonText = response.text.trim();
-    return JSON.parse(jsonText) as CandidateData;
+    const data = JSON.parse(jsonText) as CandidateData;
+
+    // Additional client-side filter for Board Member positions (belt-and-suspenders approach)
+    data.workHistory = data.workHistory.filter(
+      job => !job.jobTitle.toLowerCase().includes('board member')
+    );
+
+    return data;
   } catch (error) {
     console.error("Error extracting CV info with Gemini:", error);
     console.error("Failed on CV text snippet:", cvText.substring(0, 500) + '...');

@@ -1,5 +1,6 @@
 import PptxGenJS from 'pptxgenjs';
 import type { CandidateData, WorkExperience, Education } from '../types';
+import { layout } from '../layout';
 
 // Helper to chunk an array into smaller arrays
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -11,6 +12,9 @@ function chunk<T>(arr: T[], size: number): T[][] {
 export const createPresentation = async (candidates: CandidateData[]): Promise<void> => {
   const pptx = new PptxGenJS();
   pptx.layout = 'LAYOUT_16x9';
+
+  // Configure to use centimeters
+  pptx.defineLayout({ name: 'CM_LAYOUT', width: 25.4, height: 14.29 });
 
   // --- Title Slide (Replicating style from user's PDF) ---
   const titleSlide = pptx.addSlide();
@@ -40,12 +44,12 @@ export const createPresentation = async (candidates: CandidateData[]): Promise<v
 
 
     page.forEach((candidate, index) => {
-      const y = 0.75 + index * 1.7;
+      const row = layout.rows[index];
 
       // Add alternating background color
       if (index % 2 !== 0) {
         slide.addShape(pptx.ShapeType.rect, {
-          x: 0, y: y - 0.1, w: '100%', h: 1.7, fill: { color: 'FFFBEA' }
+          x: 0, y: row.y, w: '100%', h: row.h, fill: { color: 'FFFBEA' }
         });
       }
 
@@ -57,18 +61,30 @@ export const createPresentation = async (candidates: CandidateData[]): Promise<v
         educationText.push({ text: institutionLine, options: { bold: true, fontSize: 11 } });
         educationText.push({ text: edu.degree, options: { fontSize: 10, bullet: true, indentLevel: 1 } });
       });
-      slide.addText(educationText, { x: 0.5, y: y, w: 5, h: 1.5, valign: 'top' });
+      slide.addText(educationText, {
+        x: layout.education.x,
+        y: row.y,
+        w: layout.education.w,
+        h: row.h,
+        valign: 'top'
+      });
 
       // Name & Work History (Right Column)
       const workHistoryText: PptxGenJS.TextProps[] = [];
       workHistoryText.push({ text: candidate.name.toUpperCase(), options: { bold: true, fontSize: 12, color: '000000' } });
       workHistoryText.push({ text: '', options: { breakLine: true } }); // Spacer
-      
+
       candidate.workHistory.forEach((job) => {
         const jobLine = job.dates ? `${job.company} - ${job.jobTitle} ${job.dates}` : `${job.company} - ${job.jobTitle}`;
         workHistoryText.push({ text: jobLine, options: { fontSize: 10, bullet: true } });
       });
-      slide.addText(workHistoryText, { x: 6.5, y: y, w: 6.5, h: 1.5, valign: 'top' });
+      slide.addText(workHistoryText, {
+        x: layout.experience.x,
+        y: row.y,
+        w: layout.experience.w,
+        h: row.h,
+        valign: 'top'
+      });
     });
   }
 
