@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { chunkPdfByCandidate } from './services/pdfService';
 import { extractCandidateFromText } from './services/geminiService';
 import { createPresentation } from './services/pptService';
@@ -65,6 +65,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [processedCount, setProcessedCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
+  const [failedCandidates, setFailedCandidates] = useState<Array<{ index: number; error: string }>>([]);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const isProcessing = useMemo(() => ['parsing', 'extracting', 'generating'].includes(status), [status]);
 
@@ -73,16 +75,40 @@ export default function App() {
     setCandidatesData([]);
     setError(null);
     setStatus('idle');
+    setFailedCandidates([]);
+  }, []);
+
+  const handleReset = useCallback(() => {
+    setFile(null);
+    setCandidatesData([]);
+    setError(null);
+    setStatus('idle');
+    setFailedCandidates([]);
+    setProcessedCount(0);
+    setTotalCount(0);
+    abortControllerRef.current = null;
+  }, []);
+
+  const handleCancel = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setStatus('error');
+      setError('Processing cancelled by user.');
+    }
   }, []);
 
   const processCvFile = async () => {
     if (!file) return;
+
+    // Create new abort controller for this processing session
+    abortControllerRef.current = new AbortController();
 
     setStatus('parsing');
     setError(null);
     setCandidatesData([]);
     setProcessedCount(0);
     setTotalCount(0);
+    setFailedCandidates([]);
 
     try {
       const cvChunks = await chunkPdfByCandidate(file);
@@ -90,17 +116,57 @@ export default function App() {
       setStatus('extracting');
 
       const allData: CandidateData[] = [];
-      for (const cvText of cvChunks) {
-        const candidate = await extractCandidateFromText(cvText);
-        allData.push(candidate);
-        setCandidatesData(prevData => [...prevData, candidate]); // Update state progressively
+      const failures: Array<{ index: number; error: string }> = [];
+      const MAX_RETRIES = 3;
+
+      for (let i = 0; i < cvChunks.length; i++) {
+        // Check if processing was cancelled
+        if (abortControllerRef.current?.signal.aborted) {
+          console.log('Processing cancelled by user');
+          return;
+        }
+        let retries = MAX_RETRIES;
+        let success = false;
+        let lastError: Error | null = null;
+
+        while (retries > 0 && !success) {
+          try {
+            const candidate = await extractCandidateFromText(cvChunks[i]);
+            allData.push(candidate);
+            setCandidatesData(prevData => [...prevData, candidate]); // Update state progressively
+            success = true;
+          } catch (err) {
+            lastError = err instanceof Error ? err : new Error('Unknown error occurred');
+            retries--;
+
+            if (retries > 0) {
+              // Exponential backoff: 1s, 2s, 4s
+              const waitTime = 1000 * Math.pow(2, MAX_RETRIES - retries - 1);
+              console.log(`Retry ${MAX_RETRIES - retries}/${MAX_RETRIES} for candidate #${i + 1} after ${waitTime}ms...`);
+              await new Promise(resolve => setTimeout(resolve, waitTime));
+            } else {
+              // All retries exhausted
+              const errorMsg = lastError.message;
+              console.error(`Failed to extract candidate #${i + 1} after ${MAX_RETRIES} attempts:`, lastError);
+              failures.push({ index: i + 1, error: `${errorMsg} (failed after ${MAX_RETRIES} attempts)` });
+              setFailedCandidates(prev => [...prev, { index: i + 1, error: `${errorMsg} (failed after ${MAX_RETRIES} attempts)` }]);
+            }
+          }
+        }
+
         setProcessedCount(prev => prev + 1);
       }
-      
-      setStatus('generating');
-      await createPresentation(allData);
 
-      setStatus('done');
+      // Only generate PowerPoint if at least one candidate was successfully extracted
+      if (allData.length > 0) {
+        setStatus('generating');
+        await createPresentation(allData);
+        setStatus('done');
+      } else {
+        // All candidates failed
+        setError(`Failed to extract any candidates. All ${cvChunks.length} CVs had errors.`);
+        setStatus('error');
+      }
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : 'An unknown error occurred.');
@@ -131,19 +197,46 @@ export default function App() {
         <main className="bg-white shadow-xl rounded-lg p-8">
           {!file && <FileUploader onFileSelect={handleFileSelect} disabled={isProcessing} />}
           
-          {file && (
+          {file && status === 'idle' && (
              <div className="text-center">
               <p className="mb-4 text-gray-700">File selected: <span className="font-semibold">{file.name}</span></p>
 
-              <button
-                onClick={processCvFile}
-                disabled={isProcessing}
-                className="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
-              >
-                {isProcessing && <Spinner />}
-                <span className="ml-2">{isProcessing ? 'Processing...' : 'Generate Presentation'}</span>
-              </button>
+              <div className="flex gap-3 justify-center">
+                <button
+                  onClick={processCvFile}
+                  className="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  Generate Presentation
+                </button>
+                <button
+                  onClick={handleReset}
+                  className="inline-flex items-center justify-center px-6 py-3 border border-gray-300 text-base font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  Choose Different File
+                </button>
+              </div>
              </div>
+          )}
+
+          {isProcessing && (
+            <div className="text-center">
+              <p className="mb-4 text-gray-700">File selected: <span className="font-semibold">{file?.name}</span></p>
+              <div className="flex gap-3 justify-center">
+                <button
+                  disabled
+                  className="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-gray-400 cursor-not-allowed"
+                >
+                  <Spinner />
+                  <span className="ml-2">Processing...</span>
+                </button>
+                <button
+                  onClick={handleCancel}
+                  className="inline-flex items-center justify-center px-6 py-3 border border-red-300 text-base font-medium rounded-md shadow-sm text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           )}
 
           {(isProcessing || status === 'done' || status === 'error') && (
@@ -151,6 +244,29 @@ export default function App() {
               <p className={`text-lg font-medium ${status === 'error' ? 'text-red-600' : 'text-gray-700'}`}>
                 {statusMessage}
               </p>
+              {status === 'done' && failedCandidates.length > 0 && (
+                <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <p className="text-sm font-semibold text-yellow-800">
+                    Successfully processed {candidatesData.length} of {totalCount} candidates.
+                  </p>
+                  <p className="text-sm text-yellow-700 mt-1">
+                    {failedCandidates.length} candidate{failedCandidates.length > 1 ? 's' : ''} failed (see below for details).
+                  </p>
+                </div>
+              )}
+              {status === 'done' && failedCandidates.length === 0 && totalCount > 0 && (
+                <p className="mt-2 text-sm text-green-600">
+                  All {totalCount} candidates processed successfully!
+                </p>
+              )}
+              {(status === 'done' || status === 'error') && (
+                <button
+                  onClick={handleReset}
+                  className="mt-6 inline-flex items-center justify-center px-6 py-3 border border-gray-300 text-base font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  Upload New File
+                </button>
+              )}
             </div>
           )}
 
@@ -160,6 +276,20 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {candidatesData.map((candidate, index) => (
                   <CandidateCard key={index} candidate={candidate} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {failedCandidates.length > 0 && (
+            <div className="mt-8">
+              <h2 className="text-2xl font-semibold text-red-700 mb-4">Failed Candidates</h2>
+              <div className="space-y-3">
+                {failedCandidates.map((failure, index) => (
+                  <div key={index} className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <p className="font-semibold text-red-800">Candidate #{failure.index}</p>
+                    <p className="text-sm text-red-600 mt-1">{failure.error}</p>
+                  </div>
                 ))}
               </div>
             </div>
