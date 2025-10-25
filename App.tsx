@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { chunkPdfByCandidate } from './services/pdfService';
-import { extractCandidateFromText } from './services/geminiService';
+import { extractCandidateFromText, type GeminiModel } from './services/geminiService';
 import { createPresentation } from './services/pptService';
 import type { CandidateData, ProcessingStatus } from './types';
 
@@ -66,6 +66,7 @@ export default function App() {
   const [processedCount, setProcessedCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
   const [failedCandidates, setFailedCandidates] = useState<Array<{ index: number; error: string }>>([]);
+  const [selectedModel, setSelectedModel] = useState<GeminiModel>('gemini-2.5-flash');
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const isProcessing = useMemo(() => ['parsing', 'extracting', 'generating'].includes(status), [status]);
@@ -131,7 +132,7 @@ export default function App() {
 
         while (retries > 0 && !success) {
           try {
-            const candidate = await extractCandidateFromText(cvChunks[i]);
+            const candidate = await extractCandidateFromText(cvChunks[i], selectedModel);
             allData.push(candidate);
             setCandidatesData(prevData => [...prevData, candidate]); // Update state progressively
             success = true;
@@ -195,8 +196,38 @@ export default function App() {
         </header>
 
         <main className="bg-white shadow-xl rounded-lg p-8">
-          {!file && <FileUploader onFileSelect={handleFileSelect} disabled={isProcessing} />}
-          
+          {!file && (
+            <>
+              <FileUploader onFileSelect={handleFileSelect} disabled={isProcessing} />
+
+              <div className="mt-6 flex justify-center items-center gap-4">
+                <label className="text-sm font-medium text-gray-700">AI Model:</label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setSelectedModel('gemini-2.5-flash')}
+                    className={`px-4 py-2 text-sm font-medium rounded-md ${
+                      selectedModel === 'gemini-2.5-flash'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    Flash (Faster)
+                  </button>
+                  <button
+                    onClick={() => setSelectedModel('gemini-2.5-pro')}
+                    className={`px-4 py-2 text-sm font-medium rounded-md ${
+                      selectedModel === 'gemini-2.5-pro'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    Pro (More Accurate)
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+
           {file && status === 'idle' && (
              <div className="text-center">
               <p className="mb-4 text-gray-700">File selected: <span className="font-semibold">{file.name}</span></p>
