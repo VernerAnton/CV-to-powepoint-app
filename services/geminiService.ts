@@ -1,7 +1,9 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import type { CandidateData } from '../types';
 
+console.log('DEBUG: import.meta.env =', import.meta.env);
 const apiKey = import.meta.env.VITE_API_KEY;
+console.log('DEBUG: apiKey =', apiKey);
 if (!apiKey) {
   throw new Error("VITE_API_KEY environment variable not set. Please add it to your .env.local file.");
 }
