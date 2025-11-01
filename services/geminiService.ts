@@ -1,12 +1,13 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import type { CandidateData } from '../types';
+import type { CandidateData } from "../types";
+
+export const GEMINI_API_KEY_MISSING_MESSAGE =
+  "Google Gemini API key is not configured. Please set VITE_API_KEY in your environment (e.g., .env.local or a Codespaces secret).";
 
 const apiKey = import.meta.env.VITE_API_KEY;
-if (!apiKey) {
-  throw new Error("VITE_API_KEY environment variable not set. Please add it to your .env.local file.");
-}
+export const isGeminiConfigured = Boolean(apiKey);
 
-const ai = new GoogleGenAI({ apiKey });
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 const candidateSchema = {
   type: Type.OBJECT,
@@ -67,8 +68,13 @@ Extract the following:
 3. All of their educational experiences, including the degree or qualification and the name of the institution. Dates should be in MM/YYYY - MM/YYYY format.
 `;
 
+  const client = ai;
+  if (!client) {
+    throw new Error(GEMINI_API_KEY_MISSING_MESSAGE);
+  }
+
   try {
-    const response = await ai.models.generateContent({
+    const response = await client.models.generateContent({
       model,
       contents: prompt,
       config: {
@@ -89,6 +95,9 @@ Extract the following:
   } catch (error) {
     console.error("Error extracting CV info with Gemini:", error);
     console.error("Failed on CV text snippet:", cvText.substring(0, 500) + '...');
+    if (error instanceof Error) {
+      throw error;
+    }
     throw new Error("Failed to parse CV data from AI response.");
   }
 };

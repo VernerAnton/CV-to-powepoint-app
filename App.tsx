@@ -1,6 +1,11 @@
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { chunkPdfByCandidate } from './services/pdfService';
-import { extractCandidateFromText, type GeminiModel } from './services/geminiService';
+import {
+  extractCandidateFromText,
+  type GeminiModel,
+  isGeminiConfigured,
+  GEMINI_API_KEY_MISSING_MESSAGE,
+} from './services/geminiService';
 import { createPresentationFromTemplate } from './services/pptTemplateService';
 import type { CandidateData, ProcessingStatus } from './types';
 
@@ -59,10 +64,11 @@ const CandidateCard: React.FC<CandidateCardProps> = ({ candidate }) => (
 // --- Main App Component ---
 
 export default function App() {
+  const geminiConfigured = isGeminiConfigured;
   const [file, setFile] = useState<File | null>(null);
-  const [status, setStatus] = useState<ProcessingStatus>('idle');
+  const [status, setStatus] = useState<ProcessingStatus>(geminiConfigured ? 'idle' : 'error');
   const [candidatesData, setCandidatesData] = useState<CandidateData[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(geminiConfigured ? null : GEMINI_API_KEY_MISSING_MESSAGE);
   const [processedCount, setProcessedCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
   const [failedCandidates, setFailedCandidates] = useState<Array<{ index: number; error: string }>>([]);
@@ -72,23 +78,28 @@ export default function App() {
   const isProcessing = useMemo(() => ['parsing', 'extracting', 'generating'].includes(status), [status]);
 
   const handleFileSelect = useCallback((selectedFile: File) => {
+    if (!geminiConfigured) {
+      setError(GEMINI_API_KEY_MISSING_MESSAGE);
+      setStatus('error');
+      return;
+    }
     setFile(selectedFile);
     setCandidatesData([]);
     setError(null);
     setStatus('idle');
     setFailedCandidates([]);
-  }, []);
+  }, [geminiConfigured]);
 
   const handleReset = useCallback(() => {
     setFile(null);
     setCandidatesData([]);
-    setError(null);
-    setStatus('idle');
+    setError(geminiConfigured ? null : GEMINI_API_KEY_MISSING_MESSAGE);
+    setStatus(geminiConfigured ? 'idle' : 'error');
     setFailedCandidates([]);
     setProcessedCount(0);
     setTotalCount(0);
     abortControllerRef.current = null;
-  }, []);
+  }, [geminiConfigured]);
 
   const handleCancel = useCallback(() => {
     if (abortControllerRef.current) {
@@ -100,6 +111,12 @@ export default function App() {
 
   const processCvFile = async () => {
     if (!file) return;
+
+    if (!geminiConfigured) {
+      setError(GEMINI_API_KEY_MISSING_MESSAGE);
+      setStatus('error');
+      return;
+    }
 
     // Create new abort controller for this processing session
     abortControllerRef.current = new AbortController();
@@ -182,7 +199,7 @@ export default function App() {
       case 'extracting': return `Extracting info from CV... (${processedCount}/${totalCount})`;
       case 'generating': return "Generating PowerPoint presentation...";
       case 'done': return "Process complete! Your download should start automatically.";
-      case 'error': return `An error occurred: ${error}`;
+      case 'error': return error ? `An error occurred: ${error}` : 'An error occurred.';
       default: return "";
     }
   }, [status, processedCount, totalCount, error]);
@@ -196,9 +213,18 @@ export default function App() {
         </header>
 
         <main className="bg-white shadow-xl rounded-lg p-8">
+          {!geminiConfigured && (
+            <div className="mb-6 rounded-lg border border-yellow-300 bg-yellow-50 p-4 text-left text-yellow-900">
+              <h2 className="text-lg font-semibold">Google Gemini API key required</h2>
+              <p className="mt-2 text-sm">{GEMINI_API_KEY_MISSING_MESSAGE}</p>
+              <p className="mt-2 text-sm">
+                Add <code>VITE_API_KEY=your_api_key</code> to a <code>.env.local</code> file or configure a Codespaces secret, then restart the dev server.
+              </p>
+            </div>
+          )}
           {!file && (
             <>
-              <FileUploader onFileSelect={handleFileSelect} disabled={isProcessing} />
+              <FileUploader onFileSelect={handleFileSelect} disabled={isProcessing || !geminiConfigured} />
 
               <div className="mt-6 flex justify-center items-center gap-4">
                 <label className="text-sm font-medium text-gray-700">AI Model:</label>
@@ -235,7 +261,10 @@ export default function App() {
               <div className="flex gap-3 justify-center">
                 <button
                   onClick={processCvFile}
-                  className="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                  disabled={!geminiConfigured || isProcessing}
+                  className={`inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
+                    !geminiConfigured || isProcessing ? 'bg-blue-400 cursor-not-allowed opacity-60' : 'bg-blue-600 hover:bg-blue-700'
+                  }`}
                 >
                   Generate Presentation
                 </button>
@@ -330,3 +359,4 @@ export default function App() {
     </div>
   );
 }
+
