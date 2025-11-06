@@ -1,20 +1,40 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# CV to PowerPoint Automator (Vite Version)
 
-# Run and deploy your AI Studio app
+This is a modern frontend application built with Vite, React, TypeScript, and Tailwind CSS to automate the creation of PowerPoint presentations from LinkedIn CVs.
 
-This contains everything you need to run your app locally.
+## Prerequisites
 
-View your app in AI Studio: https://ai.studio/apps/drive/1VZRIxB8pie_5u840OjgSlBc4648nv0la
+- [Node.js](https://nodejs.org/) (version 18 or newer recommended)
+- [npm](https://www.npmjs.com/) (usually comes with Node.js)
 
-## Run Locally
+## Local Development
 
-**Prerequisites:**  Node.js
+1.  **Create an Environment File**
 
+    Create a file named `.env.local` in the root of the project and add your Gemini API key:
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+    ```
+    VITE_API_KEY=YOUR_GEMINI_API_KEY_HERE
+    ```
+
+2.  **Install Dependencies**
+
+    Open your terminal in the project root and run:
+    ```bash
+    npm install
+    ```
+
+3.  **Run the Development Server**
+
+    Start the Vite development server:
+    ```bash
+    npm run dev
+    ```
+
+    The application will now be running at `http://localhost:5173`.
+
+## Available Scripts
+
+- `npm run dev`: Starts the development server.
+- `npm run build`: Compiles and bundles the application for production into the `dist` directory.
+- `npm run preview`: Serves the production build locally to preview it.
