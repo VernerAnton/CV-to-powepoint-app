@@ -1,13 +1,9 @@
+
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { chunkPdfByCandidate } from './services/pdfService';
-import {
-  extractCandidateFromText,
-  type GeminiModel,
-  isGeminiConfigured,
-  GEMINI_API_KEY_MISSING_MESSAGE,
-} from './services/geminiService';
-import { createPresentationFromTemplate } from './services/pptTemplateService';
-import type { CandidateData, ProcessingStatus } from './types';
+import { extractCandidateFromText } from './services/geminiService';
+import { createPresentation } from './services/pptService';
+import type { CandidateData, ProcessingStatus, GeminiModel } from './types';
 
 // --- Helper Components (defined outside App to prevent re-creation on re-renders) ---
 
@@ -60,135 +56,174 @@ const CandidateCard: React.FC<CandidateCardProps> = ({ candidate }) => (
     </div>
 );
 
+interface ErrorReportProps {
+  failedCvs: { index: number; error: string }[];
+}
+const ErrorReport: React.FC<ErrorReportProps> = ({ failedCvs }) => (
+    <div className="mt-8 animate-fade-in">
+        <h2 className="text-2xl font-semibold text-red-700 mb-4">Processing Failures</h2>
+        <p className="text-gray-600 mb-4">The following CVs could not be processed after multiple retries and were skipped.</p>
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 space-y-2 max-h-40 overflow-y-auto">
+            {failedCvs.map(failure => (
+                <div key={failure.index}>
+                    <p className="font-semibold text-red-800">CV #{failure.index}</p>
+                </div>
+            ))}
+        </div>
+    </div>
+);
+
+// --- Model Selector Component ---
+interface ModelSelectorProps {
+  selectedModel: GeminiModel;
+  onModelChange: (model: GeminiModel) => void;
+  disabled: boolean;
+}
+const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onModelChange, disabled }) => (
+  <div className="my-6">
+    <label className="block text-sm font-medium text-gray-700 text-center mb-2">
+      Select AI Model
+    </label>
+    <div className="relative flex justify-center items-center bg-gray-200 rounded-full p-1 max-w-xs mx-auto">
+      <button
+        onClick={() => onModelChange('gemini-2.5-flash')}
+        disabled={disabled}
+        className={`w-1/2 z-10 px-4 py-1 text-sm font-semibold rounded-full transition-colors duration-300 ease-in-out focus:outline-none ${
+          selectedModel === 'gemini-2.5-flash' ? 'text-blue-700' : 'text-gray-600'
+        } disabled:opacity-50`}
+      >
+        Flash <span className="text-xs font-normal text-gray-500">(Faster)</span>
+      </button>
+      <button
+        onClick={() => onModelChange('gemini-2.5-pro')}
+        disabled={disabled}
+        className={`w-1/2 z-10 px-4 py-1 text-sm font-semibold rounded-full transition-colors duration-300 ease-in-out focus:outline-none ${
+          selectedModel === 'gemini-2.5-pro' ? 'text-blue-700' : 'text-gray-600'
+        } disabled:opacity-50`}
+      >
+        Pro <span className="text-xs font-normal text-gray-500">(Smarter)</span>
+      </button>
+      <span
+        className={`absolute top-1 bottom-1 w-1/2 bg-white rounded-full shadow-md transform transition-transform duration-300 ease-in-out ${
+          selectedModel === 'gemini-2.5-pro' ? 'translate-x-full' : 'translate-x-0'
+        }`}
+        style={{ left: '2px', right: '2px', width: 'calc(50% - 4px)' }}
+      />
+    </div>
+  </div>
+);
+
 
 // --- Main App Component ---
 
 export default function App() {
-  const geminiConfigured = isGeminiConfigured;
   const [file, setFile] = useState<File | null>(null);
-  const [status, setStatus] = useState<ProcessingStatus>(geminiConfigured ? 'idle' : 'error');
+  const [status, setStatus] = useState<ProcessingStatus>('idle');
+  const [model, setModel] = useState<GeminiModel>('gemini-2.5-flash');
   const [candidatesData, setCandidatesData] = useState<CandidateData[]>([]);
-  const [error, setError] = useState<string | null>(geminiConfigured ? null : GEMINI_API_KEY_MISSING_MESSAGE);
+  const [failedCvs, setFailedCvs] = useState<{ index: number; error: string }[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [processedCount, setProcessedCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
-  const [failedCandidates, setFailedCandidates] = useState<Array<{ index: number; error: string }>>([]);
-  const [selectedModel, setSelectedModel] = useState<GeminiModel>('gemini-2.5-flash');
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const isCancelled = useRef(false);
 
   const isProcessing = useMemo(() => ['parsing', 'extracting', 'generating'].includes(status), [status]);
 
   const handleFileSelect = useCallback((selectedFile: File) => {
-    if (!geminiConfigured) {
-      setError(GEMINI_API_KEY_MISSING_MESSAGE);
-      setStatus('error');
-      return;
-    }
     setFile(selectedFile);
     setCandidatesData([]);
+    setFailedCvs([]);
     setError(null);
     setStatus('idle');
-    setFailedCandidates([]);
-  }, [geminiConfigured]);
-
-  const handleReset = useCallback(() => {
-    setFile(null);
-    setCandidatesData([]);
-    setError(geminiConfigured ? null : GEMINI_API_KEY_MISSING_MESSAGE);
-    setStatus(geminiConfigured ? 'idle' : 'error');
-    setFailedCandidates([]);
-    setProcessedCount(0);
-    setTotalCount(0);
-    abortControllerRef.current = null;
-  }, [geminiConfigured]);
+  }, []);
 
   const handleCancel = useCallback(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      setStatus('error');
-      setError('Processing cancelled by user.');
-    }
+    isCancelled.current = true;
+    setStatus('idle');
+    setCandidatesData([]);
+    setFailedCvs([]);
+    setError(null);
+    setProcessedCount(0);
+    setTotalCount(0);
+    console.log("Process cancelled by user.");
   }, []);
 
   const processCvFile = async () => {
     if (!file) return;
 
-    if (!geminiConfigured) {
-      setError(GEMINI_API_KEY_MISSING_MESSAGE);
-      setStatus('error');
-      return;
-    }
-
-    // Create new abort controller for this processing session
-    abortControllerRef.current = new AbortController();
-
+    isCancelled.current = false;
     setStatus('parsing');
     setError(null);
     setCandidatesData([]);
+    setFailedCvs([]);
     setProcessedCount(0);
     setTotalCount(0);
-    setFailedCandidates([]);
 
     try {
       const cvChunks = await chunkPdfByCandidate(file);
+      if (isCancelled.current) return;
+
       setTotalCount(cvChunks.length);
       setStatus('extracting');
 
       const allData: CandidateData[] = [];
-      const failures: Array<{ index: number; error: string }> = [];
-      const MAX_RETRIES = 3;
-
       for (let i = 0; i < cvChunks.length; i++) {
-        // Check if processing was cancelled
-        if (abortControllerRef.current?.signal.aborted) {
-          console.log('Processing cancelled by user');
-          return;
-        }
-        let retries = MAX_RETRIES;
-        let success = false;
-        let lastError: Error | null = null;
+        if (isCancelled.current) return;
+        const cvText = cvChunks[i];
+        
+        try {
+          const candidate = await extractCandidateFromText(cvText, model);
+          if (isCancelled.current) return;
+          
+          // Client-side filtering as a fallback to remove "Board Member" roles
+          candidate.workHistory = candidate.workHistory.filter(job => 
+            !job.jobTitle.toLowerCase().includes('board member')
+          );
 
-        while (retries > 0 && !success) {
-          try {
-            const candidate = await extractCandidateFromText(cvChunks[i], selectedModel);
-            allData.push(candidate);
-            setCandidatesData(prevData => [...prevData, candidate]); // Update state progressively
-            success = true;
-          } catch (err) {
-            lastError = err instanceof Error ? err : new Error('Unknown error occurred');
-            retries--;
-
-            if (retries > 0) {
-              // Exponential backoff: 1s, 2s, 4s
-              const waitTime = 1000 * Math.pow(2, MAX_RETRIES - retries - 1);
-              console.log(`Retry ${MAX_RETRIES - retries}/${MAX_RETRIES} for candidate #${i + 1} after ${waitTime}ms...`);
-              await new Promise(resolve => setTimeout(resolve, waitTime));
-            } else {
-              // All retries exhausted
-              const errorMsg = lastError.message;
-              console.error(`Failed to extract candidate #${i + 1} after ${MAX_RETRIES} attempts:`, lastError);
-              failures.push({ index: i + 1, error: `${errorMsg} (failed after ${MAX_RETRIES} attempts)` });
-              setFailedCandidates(prev => [...prev, { index: i + 1, error: `${errorMsg} (failed after ${MAX_RETRIES} attempts)` }]);
+          allData.push(candidate);
+          setCandidatesData(prevData => [...prevData, candidate]);
+        } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : 'Unknown extraction error.';
+            console.error(`Failed to process CV #${i + 1}:`, err);
+            setFailedCvs(prevFails => [...prevFails, { index: i + 1, error: errorMsg }]);
+        } finally {
+            if (!isCancelled.current) {
+              setProcessedCount(prev => prev + 1);
             }
-          }
         }
-
-        setProcessedCount(prev => prev + 1);
       }
+      
+      if (isCancelled.current) return;
+      
+      setStatus('generating');
 
-      // Only generate PowerPoint if at least one candidate was successfully extracted
       if (allData.length > 0) {
-        setStatus('generating');
-        await createPresentationFromTemplate(allData);
-        setStatus('done');
+        try {
+          const response = await fetch('/template_with_placeholders.pptx');
+          if (!response.ok) {
+            throw new Error(`Template not found. Please ensure 'template_with_placeholders.pptx' is in the root directory.`);
+          }
+          const templateContent = await response.arrayBuffer();
+          await createPresentation(allData, templateContent);
+        } catch (templateError) {
+          throw templateError; // Propagate to the main catch block
+        }
       } else {
-        // All candidates failed
-        setError(`Failed to extract any candidates. All ${cvChunks.length} CVs had errors.`);
+        console.warn("No candidate data was successfully extracted. Skipping presentation generation.");
+        if (cvChunks.length > 0) {
+          setError("All CVs failed to process. Please check the PDF format or try again later.");
+        }
+      }
+      
+      if (isCancelled.current) return;
+
+      setStatus('done');
+    } catch (err) {
+      if (!isCancelled.current) {
+        console.error(err);
+        setError(err instanceof Error ? err.message : 'An unknown error occurred.');
         setStatus('error');
       }
-    } catch (err) {
-      console.error(err);
-      setError(err instanceof Error ? err.message : 'An unknown error occurred.');
-      setStatus('error');
     }
   };
   
@@ -196,13 +231,20 @@ export default function App() {
     switch(status) {
       case 'idle': return "Upload a PDF to begin.";
       case 'parsing': return "Parsing PDF and chunking CVs...";
-      case 'extracting': return `Extracting info from CV... (${processedCount}/${totalCount})`;
-      case 'generating': return "Generating PowerPoint presentation...";
-      case 'done': return "Process complete! Your download should start automatically.";
-      case 'error': return error ? `An error occurred: ${error}` : 'An error occurred.';
+      case 'extracting': return `Extracting info from CV... (${processedCount}/${totalCount}) using ${model === 'gemini-2.5-pro' ? 'Pro' : 'Flash'}`;
+      case 'generating': return "Generating PowerPoint from template...";
+      case 'done':
+        if (failedCvs.length > 0) {
+          if (failedCvs.length === totalCount) {
+              return `Process finished, but all ${totalCount} CVs failed to be processed.`;
+          }
+          return `Process complete with ${failedCvs.length} failure(s). Presentation generated for successful candidates.`;
+        }
+        return "Process complete! Your download should start automatically.";
+      case 'error': return `An error occurred: ${error}`;
       default: return "";
     }
-  }, [status, processedCount, totalCount, error]);
+  }, [status, processedCount, totalCount, error, failedCvs, model]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center py-10 px-4">
@@ -213,90 +255,34 @@ export default function App() {
         </header>
 
         <main className="bg-white shadow-xl rounded-lg p-8">
-          {!geminiConfigured && (
-            <div className="mb-6 rounded-lg border border-yellow-300 bg-yellow-50 p-4 text-left text-yellow-900">
-              <h2 className="text-lg font-semibold">Google Gemini API key required</h2>
-              <p className="mt-2 text-sm">{GEMINI_API_KEY_MISSING_MESSAGE}</p>
-              <p className="mt-2 text-sm">
-                Add <code>VITE_API_KEY=your_api_key</code> to a <code>.env.local</code> file or configure a Codespaces secret, then restart the dev server.
-              </p>
-            </div>
-          )}
-          {!file && (
-            <>
-              <FileUploader onFileSelect={handleFileSelect} disabled={isProcessing || !geminiConfigured} />
-
-              <div className="mt-6 flex justify-center items-center gap-4">
-                <label className="text-sm font-medium text-gray-700">AI Model:</label>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setSelectedModel('gemini-2.5-flash')}
-                    className={`px-4 py-2 text-sm font-medium rounded-md ${
-                      selectedModel === 'gemini-2.5-flash'
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                    }`}
-                  >
-                    Flash (Faster)
-                  </button>
-                  <button
-                    onClick={() => setSelectedModel('gemini-2.5-pro')}
-                    className={`px-4 py-2 text-sm font-medium rounded-md ${
-                      selectedModel === 'gemini-2.5-pro'
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                    }`}
-                  >
-                    Pro (More Accurate)
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-
-          {file && status === 'idle' && (
+          {!file && <FileUploader onFileSelect={handleFileSelect} disabled={isProcessing} />}
+          
+          {file && (
              <div className="text-center">
               <p className="mb-4 text-gray-700">File selected: <span className="font-semibold">{file.name}</span></p>
 
-              <div className="flex gap-3 justify-center">
+              <ModelSelector selectedModel={model} onModelChange={setModel} disabled={isProcessing} />
+
+              <div className="flex justify-center items-center space-x-4">
                 <button
                   onClick={processCvFile}
-                  disabled={!geminiConfigured || isProcessing}
-                  className={`inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
-                    !geminiConfigured || isProcessing ? 'bg-blue-400 cursor-not-allowed opacity-60' : 'bg-blue-600 hover:bg-blue-700'
-                  }`}
+                  disabled={isProcessing}
+                  className="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
                 >
-                  Generate Presentation
+                  {isProcessing && <Spinner />}
+                  <span className="ml-2">{isProcessing ? 'Processing...' : 'Generate Presentation'}</span>
                 </button>
-                <button
-                  onClick={handleReset}
-                  className="inline-flex items-center justify-center px-6 py-3 border border-gray-300 text-base font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                >
-                  Choose Different File
-                </button>
+
+                {isProcessing && (
+                  <button
+                    onClick={handleCancel}
+                    className="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                  >
+                    Cancel
+                  </button>
+                )}
               </div>
              </div>
-          )}
-
-          {isProcessing && (
-            <div className="text-center">
-              <p className="mb-4 text-gray-700">File selected: <span className="font-semibold">{file?.name}</span></p>
-              <div className="flex gap-3 justify-center">
-                <button
-                  disabled
-                  className="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-gray-400 cursor-not-allowed"
-                >
-                  <Spinner />
-                  <span className="ml-2">Processing...</span>
-                </button>
-                <button
-                  onClick={handleCancel}
-                  className="inline-flex items-center justify-center px-6 py-3 border border-red-300 text-base font-medium rounded-md shadow-sm text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
           )}
 
           {(isProcessing || status === 'done' || status === 'error') && (
@@ -304,30 +290,11 @@ export default function App() {
               <p className={`text-lg font-medium ${status === 'error' ? 'text-red-600' : 'text-gray-700'}`}>
                 {statusMessage}
               </p>
-              {status === 'done' && failedCandidates.length > 0 && (
-                <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <p className="text-sm font-semibold text-yellow-800">
-                    Successfully processed {candidatesData.length} of {totalCount} candidates.
-                  </p>
-                  <p className="text-sm text-yellow-700 mt-1">
-                    {failedCandidates.length} candidate{failedCandidates.length > 1 ? 's' : ''} failed (see below for details).
-                  </p>
-                </div>
-              )}
-              {status === 'done' && failedCandidates.length === 0 && totalCount > 0 && (
-                <p className="mt-2 text-sm text-green-600">
-                  All {totalCount} candidates processed successfully!
-                </p>
-              )}
-              {(status === 'done' || status === 'error') && (
-                <button
-                  onClick={handleReset}
-                  className="mt-6 inline-flex items-center justify-center px-6 py-3 border border-gray-300 text-base font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                >
-                  Upload New File
-                </button>
-              )}
             </div>
+          )}
+          
+          {failedCvs.length > 0 && status === 'done' && (
+            <ErrorReport failedCvs={failedCvs} />
           )}
 
           {candidatesData.length > 0 && (
@@ -340,23 +307,8 @@ export default function App() {
               </div>
             </div>
           )}
-
-          {failedCandidates.length > 0 && (
-            <div className="mt-8">
-              <h2 className="text-2xl font-semibold text-red-700 mb-4">Failed Candidates</h2>
-              <div className="space-y-3">
-                {failedCandidates.map((failure, index) => (
-                  <div key={index} className="bg-red-50 border border-red-200 rounded-lg p-4">
-                    <p className="font-semibold text-red-800">Candidate #{failure.index}</p>
-                    <p className="text-sm text-red-600 mt-1">{failure.error}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </main>
       </div>
     </div>
   );
 }
-

@@ -1,13 +1,11 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import type { CandidateData } from "../types";
+import type { CandidateData, GeminiModel } from '../types';
 
-export const GEMINI_API_KEY_MISSING_MESSAGE =
-  "Google Gemini API key is not configured. Please set VITE_API_KEY in your environment (e.g., .env.local or a Codespaces secret).";
+if (!process.env.API_KEY) {
+  throw new Error("API_KEY environment variable not set");
+}
 
-const apiKey = import.meta.env.VITE_API_KEY;
-export const isGeminiConfigured = Boolean(apiKey);
-
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const candidateSchema = {
   type: Type.OBJECT,
@@ -43,19 +41,14 @@ const candidateSchema = {
   required: ["name", "workHistory", "education"],
 };
 
-export type GeminiModel = 'gemini-2.5-flash' | 'gemini-2.5-pro';
+const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
-export const extractCandidateFromText = async (
-  cvText: string,
-  model: GeminiModel = 'gemini-2.5-flash'
-): Promise<CandidateData> => {
+export const extractCandidateFromText = async (cvText: string, model: GeminiModel): Promise<CandidateData> => {
   const prompt = `
 You are an expert HR assistant responsible for parsing CVs.
 Analyze the following text from a single candidate's CV and extract their information.
 The CV is from a LinkedIn profile and is likely in English, but may contain Finnish terms.
 Respond ONLY with a single valid JSON object adhering to the provided schema.
-
-IMPORTANT: Exclude any work experiences where the job title contains "Board Member" (case-insensitive).
 
 CV Text:
 ---
@@ -64,40 +57,40 @@ ${cvText}
 
 Extract the following:
 1. The full name of the candidate.
-2. Their last 5 work experiences, including job title and company name. Exclude positions containing "Board Member". If there are fewer than 5, extract all of them. Dates should be in MM/YYYY - MM/YYYY format.
+2. Their last 5 work experiences, including job title and company name. If there are fewer than 5, extract all of them. Dates should be in MM/YYYY - MM/YYYY format. IMPORTANT: Exclude any roles where the job title is 'Board Member' or similar non-operational advisory positions.
 3. All of their educational experiences, including the degree or qualification and the name of the institution. Dates should be in MM/YYYY - MM/YYYY format.
 `;
 
-  const client = ai;
-  if (!client) {
-    throw new Error(GEMINI_API_KEY_MISSING_MESSAGE);
-  }
+  const maxRetries = 3;
+  let lastError: Error | null = null;
 
-  try {
-    const response = await client.models.generateContent({
-      model,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: candidateSchema,
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await ai.models.generateContent({
+        model: model, // Use the selected model
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: candidateSchema,
+        }
+      });
+
+      const jsonText = response.text.trim();
+      return JSON.parse(jsonText) as CandidateData; // Success, exit loop and return
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.error(`Gemini extraction attempt ${attempt} failed with model ${model}:`, lastError.message);
+      
+      if (attempt < maxRetries) {
+        // Exponential backoff: 1s, 2s, 4s
+        const delayTime = Math.pow(2, attempt - 1) * 1000;
+        console.log(`Retrying in ${delayTime / 1000}s...`);
+        await delay(delayTime);
       }
-    });
-
-    const jsonText = response.text.trim();
-    const data = JSON.parse(jsonText) as CandidateData;
-
-    // Additional client-side filter for Board Member positions (belt-and-suspenders approach)
-    data.workHistory = data.workHistory.filter(
-      job => !job.jobTitle.toLowerCase().includes('board member')
-    );
-
-    return data;
-  } catch (error) {
-    console.error("Error extracting CV info with Gemini:", error);
-    console.error("Failed on CV text snippet:", cvText.substring(0, 500) + '...');
-    if (error instanceof Error) {
-      throw error;
     }
-    throw new Error("Failed to parse CV data from AI response.");
   }
+
+  // If loop completes, all retries have failed.
+  console.error(`All Gemini extraction retries failed for CV snippet with model ${model}:`, cvText.substring(0, 500) + '...');
+  throw new Error(`Failed to parse CV data after ${maxRetries} attempts. Last error: ${lastError?.message}`);
 };

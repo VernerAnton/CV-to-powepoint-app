@@ -18,3 +18,5 @@ export interface CandidateData {
 }
 
 export type ProcessingStatus = 'idle' | 'parsing' | 'extracting' | 'generating' | 'done' | 'error';
+
+export type GeminiModel = 'gemini-2.5-flash' | 'gemini-2.5-pro';

@@ -1,92 +1,73 @@
-import PptxGenJS from 'pptxgenjs';
-import type { CandidateData, WorkExperience, Education } from '../types';
-import { layout } from '../layout';
 
-// Helper to chunk an array into smaller arrays
-function chunk<T>(arr: T[], size: number): T[][] {
-  return Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>
-    arr.slice(i * size, i * size + size)
-  );
-}
+import type { CandidateData } from '../types';
 
-export const createPresentation = async (candidates: CandidateData[]): Promise<void> => {
-  const pptx = new PptxGenJS();
-  pptx.layout = 'LAYOUT_16x9';
+// Declare global variables from scripts loaded in index.html
+declare var PizZip: any;
+declare var Docxtemplater: any;
+declare var saveAs: any;
 
-  // Configure to use centimeters
-  pptx.defineLayout({ name: 'CM_LAYOUT', width: 25.4, height: 14.29 });
-
-  // --- Title Slide (Replicating style from user's PDF) ---
-  const titleSlide = pptx.addSlide();
-  titleSlide.background = { color: 'FDD803' };
-  // Add decorative shapes to mimic the design
-  titleSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w:'30%', h:'100%', fill: { color: 'FFFFFF', transparency: 70 } });
-  titleSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w:'25%', h:'100%', fill: { color: 'FFFFFF' } });
-  titleSlide.addText('Candidate Longlist Summary', {
-    x: 0.5, y: 1.5, w: 8, h: 2, fontSize: 44, bold: true, color: '333333', align: 'center'
+export const createPresentation = async (candidates: CandidateData[], templateContent: ArrayBuffer): Promise<void> => {
+  const zip = new PizZip(templateContent);
+  const doc = new Docxtemplater(zip, {
+    paragraphLoop: true,
+    linebreaks: true,
+    // Delimiters are changed to {{ }} and other custom tags to avoid conflicts and enable features.
+    delimiters: {
+        start: '{{',
+        end: '}}'
+    }
   });
-  titleSlide.addText(`Generated on: ${new Date().toLocaleDateString()}`, {
-    x: 0.5, y: 3.5, w: 8, h: 1, fontSize: 18, color: '666666', align: 'center'
-  });
+
+  const templateData: { [key: string]: any } = {};
   
-  // --- Candidate Slides ---
-  const candidatePages = chunk(candidates, 4);
+  // This system supports a maximum of 20 candidates (5 slides of 4)
+  // based on the placeholders defined in the template.
+  const MAX_CANDIDATES = 20;
+  candidates.slice(0, MAX_CANDIDATES).forEach((candidate, index) => {
+    const i = index + 1; // Placeholder indices are 1-based (e.g., NAME_1, NAME_2)
 
-  for (const page of candidatePages) {
-    const slide = pptx.addSlide();
-    slide.background = { color: 'FFFFFF' };
+    templateData[`NAME_${i}`] = candidate.name.toUpperCase();
+
+    // Limit work history to a max of 5 entries to ensure slide readability.
+    templateData[`WORK_HISTORY_${i}`] = candidate.workHistory.slice(0, 5).map(job => ({
+      JOB_TITLE: job.jobTitle,
+      COMPANY: job.company,
+      DATES: job.dates ? job.dates : ''
+    }));
     
-    // Add header logo text
-    slide.addText([
-      { text: 'suorahaku-', options: { fontSize: 12, color: 'FDD803', bold: true } },
-      { text: 'toimisto', options: { fontSize: 12, color: '333333', bold: true } }
-    ], { x: 11.5, y: 0.25, w: 1.5, h: 0.5, align: 'right' });
+    // Education history has no limit. The template's "Shrink text on overflow" 
+    // feature is responsible for visually fitting all entries.
+    templateData[`EDUCATION_${i}`] = candidate.education.map(edu => ({
+      INSTITUTION: edu.institution,
+      DEGREE: edu.degree,
+      DATES: edu.dates ? edu.dates : ''
+    }));
+  });
 
+  // Set the data object for the template
+  doc.setData(templateData);
 
-    page.forEach((candidate, index) => {
-      const row = layout.rows[index];
-
-      // Add alternating background color
-      if (index % 2 !== 0) {
-        slide.addShape(pptx.ShapeType.rect, {
-          x: 0, y: row.y, w: '100%', h: row.h, fill: { color: 'FFFBEA' }
-        });
-      }
-
-      // Education (Left Column)
-      const educationText: PptxGenJS.TextProps[] = [];
-      candidate.education.forEach((edu, eduIndex) => {
-        if (eduIndex > 0) educationText.push({ text: '', options: { breakLine: true } });
-        const institutionLine = edu.dates ? `${edu.institution} ${edu.dates}` : edu.institution;
-        educationText.push({ text: institutionLine, options: { bold: true, fontSize: 11 } });
-        educationText.push({ text: edu.degree, options: { fontSize: 10, bullet: true, indentLevel: 1 } });
-      });
-      slide.addText(educationText, {
-        x: layout.education.x,
-        y: row.y,
-        w: layout.education.w,
-        h: row.h,
-        valign: 'top'
-      });
-
-      // Name & Work History (Right Column)
-      const workHistoryText: PptxGenJS.TextProps[] = [];
-      workHistoryText.push({ text: candidate.name.toUpperCase(), options: { bold: true, fontSize: 12, color: '000000' } });
-      workHistoryText.push({ text: '', options: { breakLine: true } }); // Spacer
-
-      candidate.workHistory.forEach((job) => {
-        const jobLine = job.dates ? `${job.company} - ${job.jobTitle} ${job.dates}` : `${job.company} - ${job.jobTitle}`;
-        workHistoryText.push({ text: jobLine, options: { fontSize: 10, bullet: true } });
-      });
-      slide.addText(workHistoryText, {
-        x: layout.experience.x,
-        y: row.y,
-        w: layout.experience.w,
-        h: row.h,
-        valign: 'top'
-      });
-    });
+  try {
+    // Render the document (replace placeholders with data)
+    doc.render();
+  } catch (error) {
+    // Catch rendering errors from docxtemplater, which can happen with malformed templates.
+    console.error("Docxtemplater render error:", error);
+    // Provide a more helpful error message to the user.
+    if (error.properties && error.properties.errors) {
+        const firstError = error.properties.errors[0];
+        console.error("Detailed error:", firstError);
+        throw new Error(`Template Error: ${firstError.message}. Please check the syntax of your placeholders.`);
+    }
+    throw new Error("Failed to render the presentation. Please check your template file for syntax errors.");
   }
 
-  await pptx.writeFile({ fileName: 'Candidate_Summary.pptx' });
+  // Generate the output file as a blob
+  const out = doc.getZip().generate({
+    type: "blob",
+    mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  });
+
+  // Trigger a download of the generated file
+  saveAs(out, "Candidate_Summary_Generated.pptx");
 };
