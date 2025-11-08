@@ -20,7 +20,7 @@ We decided to move away from a code-based generation library (`pptxgenjs`) to a 
 
 ## 2. Template Creation: Detailed Instructions
 
-The success of this system depends on a correctly formatted template file named `template_with_placeholders.pptx`, which must be placed in the root of the project.
+The success of this system depends on a correctly formatted template file named `template_with_placeholders.pptx`, which must be placed in the `public` folder at the root of the project.
 
 ### Step 1: Base Design
 - Use PowerPoint to create a slide with the exact branding, layout, and text boxes for four candidates.
