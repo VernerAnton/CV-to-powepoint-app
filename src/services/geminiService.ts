@@ -1,12 +1,13 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import type { CandidateData, GeminiModel } from '../types';
 
-// FIX: Per coding guidelines, the API key must be obtained from process.env.API_KEY
-// and its availability is assumed. The check for VITE_API_KEY has been removed
-// and initialization updated to use process.env.API_KEY. This also resolves the
-// 'Property env does not exist on type ImportMeta' TypeScript error.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
+// Initialize the Google GenAI client with the API key from environment variables.
+// In Vite projects, environment variables must be prefixed with VITE_ to be exposed to the client.
+const apiKey = import.meta.env.VITE_API_KEY;
+if (!apiKey) {
+  throw new Error('VITE_API_KEY environment variable is not set');
+}
+const ai = new GoogleGenAI({ apiKey });
 const candidateSchema = {
   type: Type.OBJECT,
   properties: {
@@ -74,7 +75,9 @@ Extract the following:
           responseSchema: candidateSchema,
         }
       });
-
+if (!response.text) {
+  throw new Error('No text content in response from Gemini API');
+}
       const jsonText = response.text.trim();
       return JSON.parse(jsonText) as CandidateData; // Success, exit loop and return
     } catch (error) {
