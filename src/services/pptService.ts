@@ -1,70 +1,123 @@
 import PizZip from 'pizzip';
-import Docxtemplater from 'docxtemplater';
 import { saveAs } from 'file-saver';
 import type { CandidateData } from '../types';
 
-export const createPresentation = async (candidates: CandidateData[], templateContent: ArrayBuffer): Promise<void> => {
-  const zip = new PizZip(templateContent);
-  const doc = new Docxtemplater(zip, {
-    paragraphLoop: true,
-    linebreaks: true,
-    // Delimiters are changed to {{ }} and other custom tags to avoid conflicts and enable features.
-    delimiters: {
-        start: '{{',
-        end: '}}'
-    }
-  });
+/**
+ * Escape XML special characters
+ */
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
 
-  const templateData: { [key: string]: any } = {};
-  
-  // This system supports a maximum of 20 candidates (5 slides of 4)
-  // based on the placeholders defined in the template.
-  const MAX_CANDIDATES = 20;
-  candidates.slice(0, MAX_CANDIDATES).forEach((candidate, index) => {
-    const i = index + 1; // Placeholder indices are 1-based (e.g., NAME_1, NAME_2)
+/**
+ * Process loops in PowerPoint XML
+ */
+function processLoops(xml: string, data: { [key: string]: any }): string {
+  let result = xml;
 
-    templateData[`NAME_${i}`] = candidate.name.toUpperCase();
-
-    // Limit work history to a max of 5 entries to ensure slide readability.
-    templateData[`WORK_HISTORY_${i}`] = candidate.workHistory.slice(0, 5).map(job => ({
-      JOB_TITLE: job.jobTitle,
-      COMPANY: job.company,
-      DATES: job.dates ? job.dates : ''
-    }));
+  // Process each loop in the template
+  Object.keys(data).forEach(key => {
+    const value = data[key];
     
-    // Education history has no limit. The template's "Shrink text on overflow" 
-    // feature is responsible for visually fitting all entries.
-    templateData[`EDUCATION_${i}`] = candidate.education.map(edu => ({
-      INSTITUTION: edu.institution,
-      DEGREE: edu.degree,
-      DATES: edu.dates ? edu.dates : ''
-    }));
-  });
+    if (Array.isArray(value)) {
+      // Handle array loops: {?KEY}{#KEY}...{/KEY}{/?KEY}
+      const loopRegex = new RegExp(
+        `\\{\\?${key}\\}[\\s\\S]*?\\{#${key}\\}([\\s\\S]*?)\\{\\/${key}\\}[\\s\\S]*?\\{\/\\?${key}\\}`,
+        'g'
+      );
 
-  // Set the data object for the template
-  doc.setData(templateData);
+      result = result.replace(loopRegex, (match, loopContent) => {
+        if (value.length === 0) {
+          return ''; // Empty array = remove the whole section
+        }
 
-  try {
-    // Render the document (replace placeholders with data)
-    doc.render();
-  } catch (error) {
-    // Catch rendering errors from docxtemplater, which can happen with malformed templates.
-    console.error("Docxtemplater render error:", error);
-    // Provide a more helpful error message to the user.
-    if (error && typeof error === 'object' && 'properties' in error && error.properties && typeof error.properties === 'object' && 'errors' in error.properties) {
-        const firstError = (error.properties as any).errors[0];
-        console.error("Detailed error:", firstError);
-        throw new Error(`Template Error: ${firstError.message}. Please check the syntax of your placeholders.`);
+        // Repeat the loop content for each item
+        return value.map(item => {
+          let itemContent = loopContent;
+          
+          // Replace placeholders in loop content
+          Object.keys(item).forEach(itemKey => {
+            const placeholder = `{{${itemKey}}}`;
+            const itemValue = item[itemKey] || '';
+            itemContent = itemContent.replace(new RegExp(escapeRegex(placeholder), 'g'), escapeXml(String(itemValue)));
+          });
+          
+          return itemContent;
+        }).join('');
+      });
+    } else {
+      // Handle simple string replacements
+      const placeholder = `{{${key}}}`;
+      result = result.replace(new RegExp(escapeRegex(placeholder), 'g'), escapeXml(String(value)));
     }
-    throw new Error("Failed to render the presentation. Please check your template file for syntax errors.");
-  }
-
-  // Generate the output file as a blob
-  const out = doc.getZip().generate({
-    type: "blob",
-    mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   });
 
-  // Trigger a download of the generated file
-  saveAs(out, "Candidate_Summary_Generated.pptx");
+  return result;
+}
+
+/**
+ * Escape regex special characters
+ */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export const createPresentation = async (candidates: CandidateData[], templateContent: ArrayBuffer): Promise<void> => {
+  try {
+    const zip = new PizZip(templateContent);
+
+    // Prepare data for all candidates
+    const templateData: { [key: string]: any } = {};
+    
+    const MAX_CANDIDATES = 20;
+    candidates.slice(0, MAX_CANDIDATES).forEach((candidate, index) => {
+      const i = index + 1;
+
+      templateData[`NAME_${i}`] = candidate.name.toUpperCase();
+
+      templateData[`WORK_HISTORY_${i}`] = candidate.workHistory.slice(0, 5).map(job => ({
+        JOB_TITLE: job.jobTitle,
+        COMPANY: job.company,
+        DATES: job.dates || ''
+      }));
+      
+      templateData[`EDUCATION_${i}`] = candidate.education.map(edu => ({
+        INSTITUTION: edu.institution,
+        DEGREE: edu.degree,
+        DATES: edu.dates || ''
+      }));
+    });
+
+    // Process all slides
+    const slideFiles = Object.keys(zip.files).filter(name => name.match(/^ppt\/slides\/slide\d+\.xml$/));
+    
+    slideFiles.forEach(slideFile => {
+      const slideXml = zip.file(slideFile)?.asText();
+      if (slideXml) {
+        const processedXml = processLoops(slideXml, templateData);
+        zip.file(slideFile, processedXml);
+      }
+    });
+
+    // Generate output
+    const out = zip.generate({
+      type: "blob",
+      mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    });
+
+    saveAs(out, "Candidate_Summary_Generated.pptx");
+    console.log('✅ PowerPoint generated successfully!');
+
+  } catch (error) {
+    console.error('Error generating presentation:', error);
+    const errorMessage = error && typeof error === 'object' && 'message' in error 
+      ? (error as Error).message 
+      : 'Unknown error';
+    throw new Error(`Failed to generate presentation: ${errorMessage}`);
+  }
 };
