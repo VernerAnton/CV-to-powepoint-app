@@ -74,7 +74,7 @@ export const createPresentation = async (candidates: CandidateData[], templateCo
     // Prepare data for all candidates
     const templateData: { [key: string]: any } = {};
     
-    const MAX_CANDIDATES = 20;
+    const MAX_CANDIDATES = 60;
     candidates.slice(0, MAX_CANDIDATES).forEach((candidate, index) => {
       const i = index + 1;
 
