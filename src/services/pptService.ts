@@ -31,7 +31,7 @@ function processLoops(xml: string, data: { [key: string]: any }): string {
         'g'
       );
 
-      result = result.replace(loopRegex, (match, loopContent) => {
+      result = result.replace(loopRegex, (_match, loopContent) => {
         if (value.length === 0) {
           return ''; // Empty array = remove the whole section
         }
