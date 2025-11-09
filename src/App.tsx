@@ -111,6 +111,45 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onModelCha
     </div>
   </div>
 );
+// --- Output Method Selector Component ---
+interface OutputMethodSelectorProps {
+  selectedMethod: 'powerpoint' | 'manual';
+  onMethodChange: (method: 'powerpoint' | 'manual') => void;
+  disabled: boolean;
+}
+const OutputMethodSelector: React.FC<OutputMethodSelectorProps> = ({ selectedMethod, onMethodChange, disabled }) => (
+  <div className="my-6">
+    <label className="block text-sm font-medium text-gray-700 text-center mb-2">
+      Output Method
+    </label>
+    <div className="relative flex justify-center items-center bg-gray-200 rounded-full p-1 max-w-xs mx-auto">
+      <button
+        onClick={() => onMethodChange('manual')}
+        disabled={disabled}
+        className={`w-1/2 z-10 px-4 py-1 text-sm font-semibold rounded-full transition-colors duration-300 ease-in-out focus:outline-none ${
+          selectedMethod === 'manual' ? 'text-green-700' : 'text-gray-600'
+        } disabled:opacity-50`}
+      >
+        Manual <span className="text-xs font-normal text-gray-500">(Copy)</span>
+      </button>
+      <button
+        onClick={() => onMethodChange('powerpoint')}
+        disabled={disabled}
+        className={`w-1/2 z-10 px-4 py-1 text-sm font-semibold rounded-full transition-colors duration-300 ease-in-out focus:outline-none ${
+          selectedMethod === 'powerpoint' ? 'text-green-700' : 'text-gray-600'
+        } disabled:opacity-50`}
+      >
+        PowerPoint <span className="text-xs font-normal text-gray-500">(Auto)</span>
+      </button>
+      <span
+        className={`absolute top-1 bottom-1 w-1/2 bg-white rounded-full shadow-md transform transition-transform duration-300 ease-in-out ${
+          selectedMethod === 'powerpoint' ? 'translate-x-full' : 'translate-x-0'
+        }`}
+        style={{ left: '2px', right: '2px', width: 'calc(50% - 4px)' }}
+      />
+    </div>
+  </div>
+);
 
 
 // --- Main App Component ---
@@ -119,6 +158,7 @@ export default function App() {
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<ProcessingStatus>('idle');
   const [model, setModel] = useState<GeminiModel>('gemini-2.5-flash');
+  const [outputMethod, setOutputMethod] = useState<'powerpoint' | 'manual'>('manual');
   const [candidatesData, setCandidatesData] = useState<CandidateData[]>([]);
   const [failedCvs, setFailedCvs] = useState<{ index: number; error: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -196,18 +236,19 @@ export default function App() {
       
       setStatus('generating');
 
-      if (allData.length > 0) {
-        try {
-          const response = await fetch('/template_with_placeholders.pptx');
-          if (!response.ok) {
-            throw new Error(`Template not found. Please ensure 'template_with_placeholders.pptx' is in the public directory.`);
-          }
-          const templateContent = await response.arrayBuffer();
-          await createPresentation(allData, templateContent);
-        } catch (templateError) {
-          throw templateError; // Propagate to the main catch block
-        }
-      } else {
+   if (allData.length > 0 && outputMethod === 'powerpoint') {
+  setStatus('generating');
+  try {
+    const response = await fetch('/template_with_placeholders.pptx');
+    if (!response.ok) {
+      throw new Error(`Template not found. Please ensure 'template_with_placeholders.pptx' is in the public directory.`);
+    }
+    const templateContent = await response.arrayBuffer();
+    await createPresentation(allData, templateContent);
+  } catch (templateError) {
+    throw templateError; // Propagate to the main catch block
+  }
+} else if (allData.length === 0) {
         console.warn("No candidate data was successfully extracted. Skipping presentation generation.");
         if (cvChunks.length > 0) {
           setError("All CVs failed to process. Please check the PDF format or try again later.");
@@ -261,6 +302,8 @@ export default function App() {
               <p className="mb-4 text-gray-700">File selected: <span className="font-semibold">{file.name}</span></p>
 
               <ModelSelector selectedModel={model} onModelChange={setModel} disabled={isProcessing} />
+              <ModelSelector selectedModel={model} onModelChange={setModel} disabled={isProcessing} />
+<OutputMethodSelector selectedMethod={outputMethod} onMethodChange={setOutputMethod} disabled={isProcessing} />
 
               <div className="flex justify-center items-center space-x-4">
                 <button
@@ -304,6 +347,71 @@ export default function App() {
                   <CandidateCard key={index} candidate={candidate} />
                 ))}
               </div>
+            </div>
+          )}
+            {candidatesData.length > 0 && (
+            <div className="mt-8">
+              <h2 className="text-2xl font-semibold text-gray-800 mb-4">Extracted Candidates</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {candidatesData.map((candidate, index) => (
+                  <CandidateCard key={index} candidate={candidate} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ADD THE NEW CODE HERE */}
+          {candidatesData.length > 0 && (
+            <div className="mt-8">
+              <h2 className="text-2xl font-semibold text-gray-800 mb-4">Copyable Text for PowerPoint</h2>
+              <div className="bg-gray-50 border-2 border-gray-300 rounded-lg p-6 font-mono text-sm whitespace-pre-wrap">
+                {candidatesData.map((candidate, index) => (
+                  <div key={index} className="mb-8">
+                    <div className="text-base">
+                      {candidate.name.toUpperCase()}
+                    </div>
+                    {candidate.workHistory.length > 0 && (
+                      <div className="mb-3">
+                        {candidate.workHistory.slice(0, 5).map((job, jobIndex) => (
+                          <div key={jobIndex}>
+                            • {job.company} — {job.jobTitle}{job.dates ? ` · ${job.dates}` : ''}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {candidate.education.length > 0 && (
+                      <div>
+                        {candidate.education.map((edu, eduIndex) => (
+                          <div key={eduIndex} className="mb-2">
+                            <div className="font-bold">{edu.institution}</div>
+                            <div>• {edu.degree}{edu.dates ? ` · ${edu.dates}` : ''}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {index < candidatesData.length - 1 && (
+                      <div className="border-t border-gray-300 my-4"></div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={() => {
+                  const textBox = document.querySelector('.whitespace-pre-wrap');
+                  if (textBox) {
+                    const range = document.createRange();
+                    range.selectNodeContents(textBox);
+                    const selection = window.getSelection();
+                    selection?.removeAllRanges();
+                    selection?.addRange(range);
+                    document.execCommand('copy');
+                    alert('Text copied to clipboard! You can now paste into PowerPoint.');
+                  }
+                }}
+                className="mt-4 inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+              >
+                Copy All Text
+              </button>
             </div>
           )}
         </main>
