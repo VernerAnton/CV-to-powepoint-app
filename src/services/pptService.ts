@@ -51,8 +51,8 @@ export const createPresentation = async (candidates: CandidateData[], templateCo
     // Catch rendering errors from docxtemplater, which can happen with malformed templates.
     console.error("Docxtemplater render error:", error);
     // Provide a more helpful error message to the user.
-    if (error.properties && error.properties.errors) {
-        const firstError = error.properties.errors[0];
+    if (error && typeof error === 'object' && 'properties' in error && error.properties && typeof error.properties === 'object' && 'errors' in error.properties) {
+        const firstError = (error.properties as any).errors[0];
         console.error("Detailed error:", firstError);
         throw new Error(`Template Error: ${firstError.message}. Please check the syntax of your placeholders.`);
     }
