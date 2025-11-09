@@ -302,7 +302,6 @@ export default function App() {
               <p className="mb-4 text-gray-700">File selected: <span className="font-semibold">{file.name}</span></p>
 
               <ModelSelector selectedModel={model} onModelChange={setModel} disabled={isProcessing} />
-              <ModelSelector selectedModel={model} onModelChange={setModel} disabled={isProcessing} />
 <OutputMethodSelector selectedMethod={outputMethod} onMethodChange={setOutputMethod} disabled={isProcessing} />
 
               <div className="flex justify-center items-center space-x-4">
