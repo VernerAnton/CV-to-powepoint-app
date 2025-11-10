@@ -1,7 +1,7 @@
 import * as pdfjs from 'pdfjs-dist';
 
 // Set worker path using CDN for reliable cross-platform compatibility
-pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs`;
+pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs`;
 /**
  * Parses a PDF file containing multiple concatenated CVs and splits them into chunks.
  * A new CV is assumed to start on a page containing "Page 1 of".
