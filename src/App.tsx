@@ -160,6 +160,8 @@ export default function App() {
   const [status, setStatus] = useState<ProcessingStatus>('idle');
   const [model, setModel] = useState<GeminiModel>('gemini-2.5-flash');
   const [outputMethod, setOutputMethod] = useState<'powerpoint' | 'manual'>('manual');
+  const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('VITE_API_KEY') || '');
+  const [showApiKeyInput, setShowApiKeyInput] = useState<boolean>(!localStorage.getItem('VITE_API_KEY'));
   const [candidatesData, setCandidatesData] = useState<CandidateData[]>([]);
   const [failedCvs, setFailedCvs] = useState<{ index: number; error: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -186,6 +188,18 @@ export default function App() {
     setProcessedCount(0);
     setTotalCount(0);
     console.log("Process cancelled by user.");
+  }, []);
+  const handleSaveApiKey = useCallback((key: string) => {
+    localStorage.setItem('VITE_API_KEY', key);
+    setApiKey(key);
+    setShowApiKeyInput(false);
+    (import.meta.env as any).VITE_API_KEY = key;
+  }, []);
+
+  const handleClearApiKey = useCallback(() => {
+    localStorage.removeItem('VITE_API_KEY');
+    setApiKey('');
+    setShowApiKeyInput(true);
   }, []);
 
   const processCvFile = async () => {
@@ -286,18 +300,59 @@ export default function App() {
       default: return "";
     }
   }, [status, processedCount, totalCount, error, failedCvs, model]);
+  const ApiKeyInput = () => {
+    const [tempKey, setTempKey] = useState('');
+    
+    return (
+      <div className="bg-yellow-50 border-2 border-yellow-400 rounded-lg p-6 mb-6">
+        <h3 className="text-lg font-semibold text-gray-800 mb-2">🔑 API Key Required</h3>
+        <p className="text-sm text-gray-600 mb-4">
+          Enter your Google Gemini API key to use this app. 
+          <a href="https://ai.google.dev/" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline ml-1">
+            Get a free API key here
+          </a>
+        </p>
+        <div className="flex gap-2">
+          <input
+            type="password"
+            value={tempKey}
+            onChange={(e) => setTempKey(e.target.value)}
+            placeholder="Enter your API key"
+            className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <button
+            onClick={() => handleSaveApiKey(tempKey)}
+            disabled={!tempKey}
+            className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center py-10 px-4">
       <div className="w-full max-w-4xl mx-auto">
-        <header className="text-center mb-8">
+         <header className="text-center mb-8 relative">
           <h1 className="text-4xl font-extrabold text-gray-800">CV to PowerPoint Automator</h1>
           <p className="mt-2 text-lg text-gray-600">Automate your recruitment workflow with AI.</p>
+          {apiKey && !showApiKeyInput && (
+            <button
+              onClick={handleClearApiKey}
+              className="absolute top-0 right-0 text-sm text-gray-600 hover:text-red-600 underline"
+            >
+              Change API Key
+            </button>
+          )}
         </header>
 
         <main className="bg-white shadow-xl rounded-lg p-8">
-          {!file && <FileUploader onFileSelect={handleFileSelect} disabled={isProcessing} />}
+            <main className="bg-white shadow-xl rounded-lg p-8">
+          {showApiKeyInput && <ApiKeyInput />}
           
+          {!file && <FileUploader onFileSelect={handleFileSelect} disabled={isProcessing} />}          
           {file && (
              <div className="text-center">
               <p className="mb-4 text-gray-700">File selected: <span className="font-semibold">{file.name}</span></p>
