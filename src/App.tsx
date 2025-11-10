@@ -347,8 +347,7 @@ export default function App() {
             </button>
           )}
         </header>
-
-        <main className="bg-white shadow-xl rounded-lg p-8">
+        
             <main className="bg-white shadow-xl rounded-lg p-8">
           {showApiKeyInput && <ApiKeyInput />}
           
